@@ -1,71 +1,71 @@
-// fetch-news.js - BH Krishi Samachar
-
 const https = require('https');
 const fs = require('fs');
 
-function fetchURL(url) {
+function get(url) {
   return new Promise((resolve) => {
-    const req = https.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)',
-        'Accept': 'application/rss+xml, text/xml, */*'
-      },
-      timeout: 15000
+    https.get(url, {
+      headers: {'User-Agent': 'Mozilla/5.0', 'Accept': 'text/xml,application/xml,*/*'},
+      timeout: 20000
     }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-    });
-    req.on('error', () => resolve(''));
-    req.on('timeout', () => { req.destroy(); resolve(''); });
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return get(res.headers.location).then(resolve);
+      }
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve(d));
+    }).on('error', () => resolve('')).on('timeout', function(){ this.destroy(); resolve(''); });
   });
 }
 
-function parseItems(xml) {
-  const items = [];
-  const regex = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-  while ((match = regex.exec(xml)) !== null) {
-    const item = match[1];
-    const title = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || item.match(/<title>(.*?)<\/title>/))?.[1] || '';
-    const link  = (item.match(/<link>(.*?)<\/link>/))?.[1] || '#';
-    const desc  = (item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/) || item.match(/<description>(.*?)<\/description>/))?.[1] || '';
-    const src   = (item.match(/<source[^>]*>(.*?)<\/source>/))?.[1] || 'News';
-    const clean = desc.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 250);
-    if (title && title.length > 5) {
-      items.push({ title: title.trim(), url: link.trim(), description: clean, source: src.trim(), pubDate: new Date().toISOString(), image: '' });
-    }
+function parse(xml) {
+  const out = [];
+  const re = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const x = m[1];
+    const t = (x.match(/<title><!\[CDATA\[(.*?)\]\]>/) || x.match(/<title>([^<]*)</))?.[1]?.trim() || '';
+    const l = (x.match(/<link>([^<]+)</))?.[1]?.trim() || '#';
+    const d = (x.match(/<description><!\[CDATA\[(.*?)\]\]>/) || x.match(/<description>([^<]*)</))?.[1]?.trim() || '';
+    const s = (x.match(/<source[^>]*>([^<]*)</))?.[1]?.trim() || 'News';
+    const clean = d.replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim().slice(0,200);
+    if (t.length > 5) out.push({title:t, url:l, description:clean, source:s, pubDate:new Date().toISOString(), image:''});
   }
-  return items;
+  return out;
 }
 
 const FEEDS = [
-  'https://news.google.com/rss/search?q=krishi+kisan+India&hl=hi&gl=IN&ceid=IN:hi',
-  'https://news.google.com/rss/search?q=agriculture+farmers+India&hl=en&gl=IN&ceid=IN:en',
-  'https://news.google.com/rss/search?q=MSP+mandi+fasal&hl=hi&gl=IN&ceid=IN:hi',
-  'https://news.google.com/rss/search?q=kisan+yojana+subsidy+India&hl=hi&gl=IN&ceid=IN:hi',
+  'https://news.google.com/rss/search?q=kisan+krishi+India&hl=hi&gl=IN&ceid=IN:hi',
+  'https://news.google.com/rss/search?q=agriculture+India+farmers&hl=en&gl=IN&ceid=IN:en',
+  'https://news.google.com/rss/search?q=MSP+fasal+mandi&hl=hi&gl=IN&ceid=IN:hi',
+  'https://news.google.com/rss/search?q=PM+kisan+yojana&hl=hi&gl=IN&ceid=IN:hi',
 ];
 
-async function main() {
-  console.log('Fetching news...', new Date().toISOString());
+(async () => {
   const all = [];
-  for (const feed of FEEDS) {
+  for (const f of FEEDS) {
     try {
-      const xml = await fetchURL(feed);
-      if (xml) all.push(...parseItems(xml));
-    } catch(e) { console.log('Feed error:', e.message); }
-    await new Promise(r => setTimeout(r, 500));
+      const xml = await get(f);
+      if (xml && xml.includes('<item>')) {
+        all.push(...parse(xml));
+        console.log('Feed OK, items:', parse(xml).length);
+      } else {
+        console.log('Feed empty or error:', f.slice(0,50));
+      }
+    } catch(e) { console.log('Error:', e.message); }
+    await new Promise(r => setTimeout(r, 1000));
   }
   const seen = new Set();
   const unique = all.filter(a => {
-    const k = a.title.substring(0, 40).toLowerCase();
-    if (seen.has(k)) return false;
+    const k = a.title.slice(0,40).toLowerCase();
+    if(seen.has(k)) return false;
     seen.add(k); return true;
-  }).slice(0, 15);
+  }).slice(0,15);
   
-  const out = { updated: new Date().toISOString(), count: unique.length, articles: unique };
-  fs.writeFileSync('news.json', JSON.stringify(out, null, 2));
-  console.log('Done! Saved', unique.length, 'articles');
-}
-
-main().catch(e => { console.error('Error:', e.message); process.exit(1); });
+  if (unique.length === 0) {
+    console.log('No articles found - saving empty');
+    fs.writeFileSync('news.json', JSON.stringify({updated:new Date().toISOString(),count:0,articles:[]},null,2));
+  } else {
+    fs.writeFileSync('news.json', JSON.stringify({updated:new Date().toISOString(),count:unique.length,articles:unique},null,2));
+    console.log('Saved', unique.length, 'articles!');
+  }
+})();
