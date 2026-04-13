@@ -1,86 +1,29 @@
-# ════════════════════════════════════════════════════════
-# BH Krishi Samachar — Daily Auto-Update
-# Har subah 6:00 AM IST (12:30 AM UTC) mein run hoga
-# Google RSS se news fetch karega
-# news.json update karega
-# GitHub Pages automatically update ho jaayegi
-# ════════════════════════════════════════════════════════
-
+# BH Krishi Samachar — Daily Auto Update
 name: Daily Agriculture News Update
 
 on:
-  # Roz subah 6:00 AM IST = 12:30 AM UTC
   schedule:
     - cron: '30 0 * * *'
-
-  # Haath se bhi run kar sako GitHub pe jaake
   workflow_dispatch:
-    inputs:
-      reason:
-        description: 'Manual run ka reason'
-        required: false
-        default: 'Manual trigger'
 
 jobs:
   fetch-and-update:
     runs-on: ubuntu-latest
-    
-    # GitHub Pages ke liye permissions
     permissions:
       contents: write
-      pages: write
-      id-token: write
-
     steps:
-      # Step 1: Repository checkout karo
-      - name: Repository checkout
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      # Step 2: Node.js setup
-      - name: Node.js setup
+           - name: Node.js setup
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      # Step 3: News fetch karo Google RSS se
-      - name: Google RSS se Agriculture News Fetch
+      - name: Fetch News
+        run: node fetch-news.js
+      - name: Commit news.json
         run: |
-          echo "=== BH Krishi Samachar News Fetch ==="
-          echo "Time: $(date)"
-          node fetch-news.js
-          echo "=== news.json content ==="
-          cat news.json | head -50
-        
-      # Step 4: news.json ko commit aur push karo
-      - name: news.json update aur push
-        run: |
-          git config user.name "BH Krishi Bot"
-          git config user.email "action@github.com"
-          
-          # news.json add karo
+          git config user.name "NewsBot"
+          git config user.email "bot@github.com"
           git add news.json
-          
-          # Check karo kuch change hua ya nahi
-          if git diff --staged --quiet; then
-            echo "Koi nayi khabar nahi mili — skip"
-          else
-            ARTICLE_COUNT=$(node -e "const d=require('./news.json');console.log(d.count||d.articles?.length||0)")
-            git commit -m "Daily news update: ${ARTICLE_COUNT} khabaren - $(date '+%d %b %Y')"
-            git push
-            echo "SUCCESS: news.json push ho gayi!"
-          fi
-
-      # Step 5: Result dikhao
-      - name: Result
-        if: always()
-        run: |
-          echo "=== Update Complete ==="
-          echo "Time: $(date)"
-          if [ -f news.json ]; then
-            COUNT=$(node -e "try{const d=require('./news.json');console.log(d.count||d.articles?.length||0)}catch(e){console.log(0)}")
-            echo "Articles saved: $COUNT"
-          else
-            echo "WARNING: news.json nahi bani"
-          fi
+          git diff --staged --quiet || git commit -m "Daily update"
+          git push
